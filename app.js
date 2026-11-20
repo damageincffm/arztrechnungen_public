@@ -3,7 +3,7 @@ import * as pdfjs from './pdf.min.js';
 pdfjs.GlobalWorkerOptions.workerSrc = './pdf.worker.min.js';
 const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
 
-const VERSION = '1.2';
+const VERSION = '1.3';
 const THIS_YEAR = new Date().getFullYear();
 const STATUS = ['offen', 'bezahlt', 'eingereicht'];
 
@@ -119,6 +119,7 @@ const okDate = d => d >= '2000-01-01' && d <= `${THIS_YEAR + 1}-12-31` && !isNaN
 const aRe = /(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})(?!\d)/g;
 const amtsIn = l => [...String(l || '').matchAll(aRe)].map(m => num(m[1])).filter(v => v > 0);
 const datesIn = l => [...String(l || '').matchAll(dRe)].map(isoD).filter(okDate);
+const recent = (ds, ref) => { const lo = ref ? String(+ref.slice(0, 4) - 2) + ref.slice(4) : `${THIS_YEAR - 2}-01-01`; const r = ds.filter(d => d >= lo); return r.length ? r : ds; };
 const fmtAmt = v => v != null && isFinite(v) ? v.toFixed(2).replace('.', ',') : '';
 const segOf = (l, re) => (String(l).split(/\s{2,}|\s[·|]\s|;/).find(s => re.test(s)) || l).trim().slice(0, 60);
 
@@ -175,7 +176,7 @@ function parseRx(lines) {
   const lineDate = re => { const i = lines.findIndex((l, j) => re.test(l) && !skip(l, j)); return i < 0 ? '' : (datesIn(lines[i])[0] || datesIn(lines[i + 1])[0] || ''); };
   out.date = lineDate(/abgabe|abgegeben|verkauf|quittung|beleg|\bbon\b|\d{1,2}:\d{2}/i);
   out.rxDate = lineDate(/ausstellungsdatum|ausgestellt|verordnungsdatum|\bdatum\b/i);
-  const all = lines.flatMap((l, i) => skip(l, i) ? [] : datesIn(l)).sort();
+  const all = recent(lines.flatMap((l, i) => skip(l, i) || /\*\s?\d/.test(l) ? [] : datesIn(l)).sort());
   if (!out.rxDate && all.length) out.rxDate = all[0];
   if (!out.date) { const later = all.filter(d => !out.rxDate || d >= out.rxDate); out.date = later.length ? later[later.length - 1] : out.rxDate || ''; out.unsure.push('date'); }
   // Betrag: Apothekenaufdruck oder Quittung
@@ -216,7 +217,8 @@ function parse(lines) {
   let bm = bLine >= 0 && ([...lines[bLine].matchAll(dateRe)][0] || [...(lines[bLine + 1] || '').matchAll(dateRe)][0]);
   if (bm) out.date = iso(bm);
   else {
-    const ds = lines.filter(l => !/geb\.|geboren|geburtsdatum/i.test(l)).flatMap(datesIn).filter(d => !out.invDate || d <= out.invDate).sort();
+    const pl = out._pl ?? -1;
+    const ds = recent(lines.filter((l, i) => i !== pl && !/geb\.|geboren|geburtsdatum|\*\s?\d/i.test(l)).flatMap(datesIn).filter(d => !out.invDate || d <= out.invDate).sort(), out.invDate);
     if (ds.length) out.date = ds[0];
     out.unsure.push('date');
   }
@@ -353,7 +355,7 @@ const tabs = () => `<nav class="tabs"><button data-act="go" data-v="home" class=
   <button class="plus" data-act="go" data-v="add" aria-label="Rechnung hinzufügen">+</button>
   <button data-act="go" data-v="files" class="${U.screen === 'files' ? 'on' : ''}">${svg('folder')}Ablage</button></nav>`;
 const meter = c => `<div class="meter"><i class="${c.cls}" style="width:${(c.ratio * 100).toFixed(1)}%"></i></div><div class="legend"><span>${eur(c.R)}</span><span>Schwelle ${eur(c.thr)}</span></div>`;
-const years = () => [...new Set([THIS_YEAR, ...D.invoices.map(i => +(i.date || '').slice(0, 4)).filter(Boolean)])].sort((a, b) => b - a).slice(0, 3).reverse();
+const years = () => [...new Set([THIS_YEAR, U.year, ...D.invoices.map(i => +(i.date || '').slice(0, 4)).filter(Boolean)])].sort((a, b) => a - b);
 const fld = (id, label, v, type = 'text', unsure = false, extra = '') => `<div class="f"><label for="${id}">${label}</label><input id="${id}" type="${type}" value="${esc(v)}" ${extra} class="${unsure ? 'unsure' : ''}">${unsure ? '<div class="hint">Bitte prüfen – nicht sicher erkannt</div>' : ''}</div>`;
 
 const HZ = [['', 'Bis die Staffel voll ist (empfohlen)'], ['0', 'Nur dieses Jahr'], ['1', 'Dieses und 1 Folgejahr'], ['2', 'Dieses und 2 Folgejahre'], ['3', 'Dieses und 3 Folgejahre']];
@@ -371,7 +373,7 @@ const V = {
       <div class="row"><span class="name">${esc(p.name)}</span><span class="pill ${c.cls}">${c.label}</span></div>
       <div class="sub">${c.inv.length} Rechnungen · BRE-Stufe ${Math.min(c.k, p.staffel.length || 1)}</div>${meter(c)}<div class="say">${sayLine(c)}</div></button>`; }).join('');
     return `<div class="top"><h2>Arztrechnungen</h2><div class="seg">${years().map(y => `<button data-act="year" data-v="${y}" class="${y === U.year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
-      <div class="scroll">${backupDue ? `<button class="banner warn" style="border:0;width:100%;text-align:left;font:inherit" data-act="go" data-v="files">${D.changedSinceBackup} Änderungen seit dem letzten Backup. Jetzt sichern →</button>` : ''}${cards}
+      <div class="scroll">${D.invoices.some(i => !D.persons.some(p => p.id === i.pid)) ? '<button class="banner warn" style="border:0;width:100%;text-align:left;font:inherit" data-act="go" data-v="files">Es gibt Belege ohne Person. In der Ablage öffnen und zuordnen →</button>' : ''}${backupDue ? `<button class="banner warn" style="border:0;width:100%;text-align:left;font:inherit" data-act="go" data-v="files">${D.changedSinceBackup} Änderungen seit dem letzten Backup. Jetzt sichern →</button>` : ''}${cards}
       <button class="btn alt" data-act="newperson">Person hinzufügen</button></div>${tabs()}`;
   },
   person() {
@@ -409,9 +411,9 @@ const V = {
     const dup = D.invoices.find(i => i.id !== U.iid && ((f.nr && i.nr === f.nr) || (i.date === f.date && Math.abs(i.amt - num(f.amt)) < 0.005 && i.pid === f.pid)));
     return `<div class="top"><button class="back" data-act="cancel">‹ ${U.iid ? 'Zurück' : 'Verwerfen'}</button>${U.iid ? '' : '<h2 style="font-size:20px">Prüfen</h2>'}</div><div class="scroll">
       <div class="preview"><canvas id="pv"></canvas>${d.images ? `<label class="btn alt" for="more" style="margin:6px 0 0">Weitere Seite fotografieren<input id="more" type="file" accept="image/*" capture="environment" hidden></label>` : ''}${U.iid ? '<button class="btn alt" data-act="openpdf" style="margin:6px 0 0">PDF öffnen</button>' : ''}</div>
-      ${d.note ? `<div class="banner warn">${esc(d.note)}</div>` : ''}${dup ? `<div class="banner warn">Mögliche Dublette: ${esc(dup.doc)} vom ${dDE(dup.date)} über ${eur(dup.amt)} ist schon erfasst.</div>` : ''}
+      ${d.note ? `<div class="banner warn">${esc(d.note)}</div>` : ''}${dup ? `<div class="banner warn">Schon erfasst: ${esc(dup.doc)} vom ${dDE(dup.date)} über ${eur(dup.amt)} – gespeichert bei <b>${esc(D.persons.find(p => p.id === dup.pid)?.name || 'keiner Person')}</b> im Jahr <b>${esc((dup.date || '?').slice(0, 4))}</b>.<button class="btn alt" style="margin:10px 0 0" data-act="invoice" data-v="${dup.id}">Vorhandenen Beleg öffnen</button></div>` : ''}
       ${!known && f.patient ? `<div class="banner warn"><b>${esc(f.patient)}</b> ist noch nicht angelegt.<button class="btn" style="margin:10px 0 0" data-act="newfromdraft">Person anlegen</button></div>` : ''}
-      <div class="seg" style="margin-bottom:14px" role="group" aria-label="Belegart"><button style="flex:1" data-act="settype" data-v="rechnung" class="${f.type !== 'rezept' ? 'on' : ''}">Rechnung</button><button style="flex:1" data-act="settype" data-v="rezept" class="${f.type === 'rezept' ? 'on' : ''}">Rezept</button></div>
+      <div class="seg" style="margin-bottom:14px;max-width:none" role="group" aria-label="Belegart"><button style="flex:1" data-act="settype" data-v="rechnung" class="${f.type !== 'rezept' ? 'on' : ''}">Rechnung</button><button style="flex:1" data-act="settype" data-v="rezept" class="${f.type === 'rezept' ? 'on' : ''}">Rezept</button></div>
       <div class="f"><label for="pid">Patient${f.patient && known && f.patient !== known.name ? ` (erkannt: ${esc(f.patient)})` : ''}</label><select id="pid" class="${un('patient') ? 'unsure' : ''}">${opts}</select></div>
       ${f.type === 'rezept'
         ? `${fld('date', 'Abgabedatum Apotheke (bestimmt das Jahr)', f.date, 'date', un('date'))}${fld('amt', 'Betrag in €', f.amt, 'text', un('amt'), 'inputmode="decimal"')}
@@ -444,8 +446,10 @@ const V = {
       const fs = D.invoices.filter(i => i.pid === p.id && (i.date || '0000').startsWith(y)).sort((a, b) => a.date.localeCompare(b.date));
       return fs.length ? `<div class="dir" style="padding-left:28px;border-top:0">${esc(slug(first(p.name)))}/</div>` + fs.map(i => `<button class="item file" data-act="invoice" data-v="${i.id}" style="border-top:0">${esc(fname(i))}</button>`).join('') : '';
     }).join('')).join('');
+    const orph = D.invoices.filter(i => !D.persons.some(p => p.id === i.pid));
+    const orphHtml = orph.length ? `<div class="dir">Ohne Person (bitte öffnen und zuordnen)/</div>` + orph.map(i => `<button class="item file" data-act="invoice" data-v="${i.id}" style="border-top:0">${esc(fname(i))}</button>`).join('') : '';
     return `<div class="top"><h2>Ablage</h2></div><div class="scroll">
-      ${D.invoices.length ? `<div class="list tree"><div class="dir" style="border-top:0">Arztrechnungen/</div>${tree}</div><button class="btn alt" data-act="zip">Alle PDFs als ZIP (mit Ordnern)</button>` : '<div class="empty">Noch keine Rechnungen</div>'}
+      ${D.invoices.length ? `<div class="list tree"><div class="dir" style="border-top:0">Arztrechnungen/</div>${tree}${orphHtml}</div><button class="btn alt" data-act="zip">Alle PDFs als ZIP (mit Ordnern)</button>` : '<div class="empty">Noch keine Rechnungen</div>'}
       <h3>Datensicherung</h3><div class="card"><p style="margin-top:0">Die Daten liegen nur in dieser App auf diesem Gerät. Sichere sie regelmäßig als Datei, z. B. in der Dateien-App.</p>
       <p class="sub">Letztes Backup: ${D.lastBackup ? new Date(D.lastBackup).toLocaleString('de-DE') : 'noch keins'}${D.changedSinceBackup ? ` · ${D.changedSinceBackup} Änderungen seitdem` : ''}</p>
       <button class="btn" data-act="backup">Backup erstellen</button><label class="btn alt" for="restore">Backup einspielen<input id="restore" type="file" accept="application/json,.json" hidden></label></div>
@@ -515,13 +519,16 @@ app.addEventListener('click', async ev => {
       readDraft(); const f = U.draft.f;
       if (!f.pid) { toast('Bitte einen Patienten wählen oder anlegen.'); break; }
       if (!f.date) { toast('Bitte das Behandlungsdatum eintragen.'); break; }
+      const Y0 = +f.date.slice(0, 4);
+      if ((Y0 < THIS_YEAR - 1 || Y0 > THIS_YEAR) && !U.yearOk) { U.sheet = { html: `<h4>Datum liegt im Jahr ${Y0}</h4><p class="sub">Der Beleg zählt dann für ${Y0} und erscheint nur, wenn oben dieses Jahr gewählt ist. Oft ist das ein falsch erkanntes Datum (z. B. Geburtsdatum).</p><button class="btn alt" data-act="closesheet">Datum korrigieren</button><button class="btn" data-act="saveyear">Trotzdem für ${Y0} speichern</button>` }; render(); break; }
+      U.yearOk = false;
       const p = D.persons.find(x => x.id === f.pid), Y = +f.date.slice(0, 4), before = calc(p, Y).cls;
       const inv = { id: U.iid || uid(), type: f.type || 'rechnung', rxDate: f.rxDate || '', prescriber: (f.prescriber || '').trim(), med: (f.med || '').trim(), pid: f.pid, date: f.date, invDate: f.invDate, amt: Math.abs(num(f.amt)), doc: f.doc.trim() || 'Unbekannt', iban: f.iban.trim(), nr: f.nr.trim(), st: f.st || 'offen' };
       if (!U.iid) await putFile(inv.id, U.draft.blob);
       const ix = D.invoices.findIndex(x => x.id === inv.id); if (ix >= 0) D.invoices[ix] = inv; else D.invoices.push(inv);
       await changed();
       const after = calc(p, Y).cls; U.year = Y; U.pid = p.id; U.draft = null; U.iid = null; go('person');
-      toast(after === 'bad' && before !== 'bad' ? `<b>Ab jetzt lohnt sich Einreichen für ${esc(p.name)}.</b>` : `Gespeichert: ${esc(fname(inv))}`); break;
+      toast(after === 'bad' && before !== 'bad' ? `<b>Ab jetzt lohnt sich Einreichen für ${esc(p.name)}.</b>` : `Gespeichert bei ${esc(p.name)} für ${Y}: ${esc(fname(inv))}`); break;
     }
     case 'openpdf': { const u = URL.createObjectURL(U.draft.blob); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60000); break; }
     case 'shareinv': { const i = D.invoices.find(x => x.id === U.iid); await deliver(U.draft.blob, fname(i)); break; }
@@ -546,6 +553,7 @@ app.addEventListener('click', async ev => {
       applyLines(lines, isRx(lines) ? 'rezept' : U.draft.f.type);
       U.draft.note = ''; render(); toast('Felder aus dem Text gefüllt – bitte prüfen.'); break;
     }
+    case 'saveyear': { U.yearOk = true; U.sheet = null; render(); app.querySelector('[data-act="saveinv"]').click(); break; }
     case 'confirm': { const fn = U.sheet.fn; U.sheet = null; await fn(); break; }
     case 'closesheet': case 'sheetbg': U.sheet = null; render(); break;
     case 'toggledone': { const k = U.pid + '|' + U.year; if (D.submitted[k]) delete D.submitted[k]; else D.submitted[k] = true; await changed(); render(); break; }
