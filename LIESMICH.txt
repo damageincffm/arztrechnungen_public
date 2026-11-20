@@ -1,0 +1,10 @@
+Arztrechnungen – Web-App, Version 1.0
+
+Diese Dateien gehören zusammen in EIN GitHub-Repository (oberste Ebene, keine Unterordner):
+index.html, app.js, sw.js, manifest.json, icon-180.png, icon-512.png,
+pdf.min.js, pdf.worker.min.js, pdf-lib.min.js
+
+Alle Daten (Rechnungen, PDFs, Personen) bleiben im Speicher der App auf dem iPhone.
+Die App baut keine Verbindung zu fremden Servern auf (Content-Security-Policy in index.html).
+
+Enthaltene Bibliotheken: pdf.js (Mozilla, Apache-2.0), pdf-lib (MIT).
