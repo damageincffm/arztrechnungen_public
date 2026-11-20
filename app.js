@@ -3,7 +3,7 @@ import * as pdfjs from './pdf.min.js';
 pdfjs.GlobalWorkerOptions.workerSrc = './pdf.worker.min.js';
 const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
 
-const VERSION = '1.1';
+const VERSION = '1.2';
 const THIS_YEAR = new Date().getFullYear();
 const STATUS = ['offen', 'bezahlt', 'eingereicht'];
 
@@ -54,12 +54,13 @@ function calc(p, Y) {
   const E = Math.max(0, R - p.sb);
   const s = p.staffel.length ? p.staffel : [1], k = stufe(p, Y), f = n => s[Math.min(n, s.length) - 1] * p.fee;
   const rows = [{ y: 'Dieses Jahr', keep: f(k), after: 0 }];
-  for (let j = 1; j <= s.length; j++) rows.push({ y: '+' + j, keep: f(k + j), after: f(j) });
+  const H = p.horizon == null ? s.length : p.horizon;
+  for (let j = 1; j <= H; j++) rows.push({ y: '+' + j, keep: f(k + j), after: f(j) });
   const V = rows.reduce((a, r) => a + r.keep - r.after, 0);
   const thr = p.sb + V, done = !!D.submitted[p.id + '|' + Y];
   const cls = done ? 'done' : E > V ? 'bad' : R >= thr * 0.8 ? 'warn' : 'ok';
   const label = { done: 'Eingereicht', bad: 'Einreichen lohnt sich', warn: 'Knapp – selbst zahlen', ok: 'Selbst zahlen' }[cls];
-  return { inv, R, E, V, thr, k, rows, cls, label, ratio: thr > 0 ? Math.min(1, R / thr) : 1 };
+  return { inv, R, E, V, thr, k, H, rows, cls, label, ratio: thr > 0 ? Math.min(1, R / thr) : 1 };
 }
 const sayLine = c => c.cls === 'done' ? 'Dieses Jahr ist als eingereicht markiert. Die Staffel beginnt im Folgejahr wieder bei Stufe 1.'
   : c.cls === 'bad' ? `Einreichen bringt ${eur(c.E - c.V)} mehr als die Rückerstattung.`
@@ -355,6 +356,9 @@ const meter = c => `<div class="meter"><i class="${c.cls}" style="width:${(c.rat
 const years = () => [...new Set([THIS_YEAR, ...D.invoices.map(i => +(i.date || '').slice(0, 4)).filter(Boolean)])].sort((a, b) => b - a).slice(0, 3).reverse();
 const fld = (id, label, v, type = 'text', unsure = false, extra = '') => `<div class="f"><label for="${id}">${label}</label><input id="${id}" type="${type}" value="${esc(v)}" ${extra} class="${unsure ? 'unsure' : ''}">${unsure ? '<div class="hint">Bitte prüfen – nicht sicher erkannt</div>' : ''}</div>`;
 
+const HZ = [['', 'Bis die Staffel voll ist (empfohlen)'], ['0', 'Nur dieses Jahr'], ['1', 'Dieses und 1 Folgejahr'], ['2', 'Dieses und 2 Folgejahre'], ['3', 'Dieses und 3 Folgejahre']];
+const hzSel = (id, h) => `<select id="${id}">${HZ.map(([v, l]) => `<option value="${v}" ${String(h ?? '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+const hzText = h => HZ.find(([v]) => v === String(h ?? ''))[1].replace(' (empfohlen)', '');
 const V = {
   busy: () => `<div class="busy"><div class="spin"></div>${esc(U.busyText || 'Bitte warten …')}</div>`,
   home() {
@@ -382,13 +386,14 @@ const V = {
       <details style="margin-top:12px"><summary>So wird gerechnet</summary>
       <table><tr><td>Erstattung (Summe − ${eur(p.sb)} Selbstbehalt)</td><td class="n">${eur(c.E)}</td></tr><tr><td>Verlust an Rückerstattung</td><td class="n">${eur(c.V)}</td></tr></table>
       <table><thead><tr><th>Jahr</th><th class="n">ohne</th><th class="n">nach Einr.</th><th class="n">Verlust</th></tr></thead><tbody>${tbl}</tbody></table>
-      <p class="sub">Stufe ${c.k} in ${U.year}. Annahme: Folgejahre leistungsfrei, Staffel ${p.staffel.join(' → ')} Monatsbeiträge à ${eur(p.fee)}.</p></details></div>
+      <p class="sub">Stufe ${c.k} in ${U.year}. Annahme: die eingerechneten Folgejahre bleiben leistungsfrei. Staffel ${p.staffel.join(' → ')} Monatsbeiträge à ${eur(p.fee)}.</p>
+      <div class="f" style="margin:0"><label for="hz">Verlust einrechnen für</label>${hzSel('hz', p.horizon)}</div></details></div>
       <h3>Belege ${U.year}</h3><div class="list">${items}</div>
       <button class="btn ${c.cls === 'bad' ? '' : 'alt'}" data-act="export" ${c.inv.length ? '' : 'disabled'}>Einreichungs-PDF ${U.year} erstellen</button>
       <button class="btn alt" data-act="toggledone">${done ? `Markierung „eingereicht“ für ${U.year} entfernen` : `${U.year} als eingereicht markieren`}</button>
       <h3>Tarif</h3><div class="list"><div class="item"><span class="t">Versicherung</span><span class="sub">${esc(p.ins || '–')}</span></div>
       <div class="item"><span class="t">Monatsbeitrag</span><span class="amt">${eur(p.fee)}</span></div><div class="item"><span class="t">Selbstbehalt / Jahr</span><span class="amt">${eur(p.sb)}</span></div>
-      <div class="item"><span class="t">BRE-Staffel</span><span class="amt">${p.staffel.join(' → ')}</span></div></div>
+      <div class="item"><span class="t">BRE-Staffel</span><span class="amt">${p.staffel.join(' → ')}</span></div><div class="item"><span class="t">Folgejahre</span><span class="sub">${hzText(p.horizon)}</span></div></div>
       <button class="btn alt" data-act="editperson">Person und Tarif bearbeiten</button></div>${tabs()}`;
   },
   add: () => `<div class="top"><h2>Beleg erfassen</h2></div><div class="scroll">
@@ -429,7 +434,8 @@ const V = {
       ${fld('pi', 'Versicherung und Tarif', e.ins)}${fld('pf', 'Monatsbeitrag in €', e.fee, 'text', false, 'inputmode="decimal"')}${fld('ps', 'Selbstbehalt pro Jahr in €', e.sb, 'text', false, 'inputmode="decimal"')}
       ${fld('pst', 'BRE-Staffel: Monatsbeiträge je leistungsfreiem Jahr', e.staffel.join(', '), 'text', false, 'inputmode="numeric"')}
       ${fld('pfr', `Leistungsfreie Jahre in Folge bis Ende ${e.freeAsOf - 1}`, e.free, 'number', false, 'inputmode="numeric" min="0"')}
-      <p class="sub" style="margin:-4px 4px 16px">Beispiel Staffel „1, 2, 3“: 1 Monatsbeitrag nach dem 1. Jahr ohne Einreichen, 2 nach dem 2., ab dem 3. Jahr jeweils 3. Die genauen Werte stehen in den Tarifbedingungen.</p>
+      <div class="f"><label for="phz">Verlust einrechnen für</label>${hzSel('phz', e.horizon)}</div>
+      <p class="sub" style="margin:-4px 4px 16px">Folgejahre: Reichst du ein, beginnt die Staffel von vorn; die App rechnet den Rückstand in so vielen Folgejahren mit ein. Weißt du, dass bald ohnehin eingereicht wird, wähle weniger. Beispiel Staffel „1, 2, 3“: 1 Monatsbeitrag nach dem 1. Jahr ohne Einreichen, 2 nach dem 2., ab dem 3. Jahr jeweils 3. Die genauen Werte stehen in den Tarifbedingungen.</p>
       <button class="btn" data-act="saveperson">Speichern</button>${e.id ? '<button class="btn danger" data-act="delperson">Person löschen</button>' : ''}</div>`;
   },
   files() {
@@ -475,7 +481,7 @@ function applyLines(lines, type) {
 }
 function confirmSheet(text, label, fn) { U.sheet = { html: `<h4>${text}</h4><p class="sub">Das lässt sich nicht rückgängig machen.</p><button class="btn danger" data-act="confirm">${label}</button><button class="btn alt" data-act="closesheet">Abbrechen</button>`, fn }; render(); }
 function readySheet(title, sub, blob, name, after) { U.sheet = { html: `<h4>${esc(title)}</h4><p class="sub">${sub}</p><button class="btn" data-act="deliver">Teilen oder in „Dateien“ sichern</button>${after ? `<button class="btn alt" data-act="sheetafter">${after.label}</button>` : ''}<button class="btn alt" data-act="closesheet">Schließen</button>`, blob, name, after }; render(); }
-const newPerson = name => ({ id: '', name: name || '', aliases: [], ins: '', fee: '', sb: '', staffel: [1, 2, 3], free: 0, freeAsOf: THIS_YEAR });
+const newPerson = name => ({ id: '', name: name || '', aliases: [], ins: '', fee: '', sb: '', staffel: [1, 2, 3], free: 0, freeAsOf: THIS_YEAR, horizon: null });
 
 app.addEventListener('click', async ev => {
   const b = ev.target.closest('[data-act]'); if (!b || b.disabled) return;
@@ -495,7 +501,7 @@ app.addEventListener('click', async ev => {
     case 'saveperson': {
       const name = val('pn').trim(); if (!name) { toast('Bitte einen Namen eingeben.'); break; }
       const st = val('pst').split(/[,;\s]+/).map(Number).filter(n => n > 0);
-      const p = { id: U.edit.id || uid(), name, aliases: val('pa').split(';').map(s => s.trim()).filter(Boolean), ins: val('pi').trim(), fee: num(val('pf')), sb: num(val('ps')), staffel: st.length ? st : [1], free: Math.max(0, parseInt(val('pfr')) || 0), freeAsOf: U.edit.freeAsOf || THIS_YEAR };
+      const p = { id: U.edit.id || uid(), name, aliases: val('pa').split(';').map(s => s.trim()).filter(Boolean), ins: val('pi').trim(), fee: num(val('pf')), sb: num(val('ps')), staffel: st.length ? st : [1], free: Math.max(0, parseInt(val('pfr')) || 0), freeAsOf: U.edit.freeAsOf || THIS_YEAR, horizon: val('phz') === '' ? null : +val('phz') };
       const ix = D.persons.findIndex(x => x.id === p.id); if (ix >= 0) D.persons[ix] = p; else D.persons.push(p);
       await changed();
       if (U.edit.back === 'review') { U.draft.f.pid = p.id; U.draft.unsure = U.draft.unsure.filter(x => x !== 'patient'); }
@@ -562,6 +568,7 @@ app.addEventListener('click', async ev => {
 app.addEventListener('change', async ev => {
   const t = ev.target;
   if (t.id === 'cam' || t.id === 'pick') { U.draft = null; U.iid = null; await ingest(t.files); }
+  else if (t.id === 'hz') { const p = D.persons.find(x => x.id === U.pid); p.horizon = t.value === '' ? null : +t.value; await changed(); render(); app.querySelector('details')?.setAttribute('open', ''); }
   else if (t.id === 'more') { readDraft(); await ingest(t.files); }
   else if (t.id === 'pid' && t.value === '__new') { readDraft(); U.edit = newPerson(U.draft.f.patient); U.edit.back = 'review'; go('personform'); }
   else if (t.id === 'restore' && t.files[0]) {
