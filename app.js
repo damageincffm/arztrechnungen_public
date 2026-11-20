@@ -3,7 +3,7 @@ import * as pdfjs from './pdf.min.js';
 pdfjs.GlobalWorkerOptions.workerSrc = './pdf.worker.min.js';
 const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
 
-const VERSION = '1.4';
+const VERSION = '1.5';
 const THIS_YEAR = new Date().getFullYear();
 const STATUS = ['offen', 'bezahlt', 'eingereicht'];
 
@@ -52,7 +52,7 @@ function calc(p, Y) {
   const inv = D.invoices.filter(i => i.pid === p.id && (i.date || '').startsWith(String(Y)));
   const R = inv.reduce((a, i) => a + i.amt, 0);
   const E = Math.max(0, R - p.sb);
-  const s = p.staffel.length ? p.staffel : [1], k = stufe(p, Y), f = n => s[Math.min(n, s.length) - 1] * p.fee;
+  const s = p.staffel.length ? p.staffel : [1], k = stufe(p, Y), f = n => s[Math.min(n, s.length) - 1] * (p.staffelUnit === 'euro' ? 1 : p.fee);
   const rows = [{ y: 'Dieses Jahr', keep: f(k), after: 0 }];
   const H = p.horizon == null ? s.length : p.horizon;
   for (let j = 1; j <= H; j++) rows.push({ y: '+' + j, keep: f(k + j), after: f(j) });
@@ -121,6 +121,7 @@ const amtsIn = l => [...String(l || '').matchAll(aRe)].map(m => num(m[1])).filte
 const datesIn = l => [...String(l || '').matchAll(dRe)].map(isoD).filter(okDate);
 const recent = (ds, ref) => { const lo = ref ? String(+ref.slice(0, 4) - 2) + ref.slice(4) : `${THIS_YEAR - 2}-01-01`; const r = ds.filter(d => d >= lo); return r.length ? r : ds; };
 const fmtN = v => (v === '' || v == null) ? '' : (typeof v === 'number' ? v.toLocaleString('de-DE', { maximumFractionDigits: 2 }) : String(v));
+const stText = p => p.staffelUnit === 'euro' ? p.staffel.map(eur).join(' → ') : p.staffel.map(fmtN).join(' → ') + ' Monatsbeiträge';
 const fmtAmt = v => v != null && isFinite(v) ? v.toFixed(2).replace('.', ',') : '';
 const segOf = (l, re) => (String(l).split(/\s{2,}|\s[·|]\s|;/).find(s => re.test(s)) || l).trim().slice(0, 60);
 
@@ -389,14 +390,14 @@ const V = {
       <details style="margin-top:12px"><summary>So wird gerechnet</summary>
       <table><tr><td>Erstattung (Summe − ${eur(p.sb)} Selbstbehalt)</td><td class="n">${eur(c.E)}</td></tr><tr><td>Verlust an Rückerstattung</td><td class="n">${eur(c.V)}</td></tr></table>
       <table><thead><tr><th>Jahr</th><th class="n">ohne</th><th class="n">nach Einr.</th><th class="n">Verlust</th></tr></thead><tbody>${tbl}</tbody></table>
-      <p class="sub">Stufe ${c.k} in ${U.year}. Annahme: die eingerechneten Folgejahre bleiben leistungsfrei. Staffel ${p.staffel.map(fmtN).join(' → ')} Monatsbeiträge à ${eur(p.fee)}.</p>
+      <p class="sub">Stufe ${c.k} in ${U.year}. Annahme: die eingerechneten Folgejahre bleiben leistungsfrei. Staffel ${stText(p)}${p.staffelUnit === 'euro' ? '' : ` à ${eur(p.fee)}`}.</p>
       <div class="f" style="margin:0"><label for="hz">Verlust einrechnen für</label>${hzSel('hz', p.horizon)}</div></details></div>
       <h3>Belege ${U.year}</h3><div class="list">${items}</div>
       <button class="btn ${c.cls === 'bad' ? '' : 'alt'}" data-act="export" ${c.inv.length ? '' : 'disabled'}>Einreichungs-PDF ${U.year} erstellen</button>
       <button class="btn alt" data-act="toggledone">${done ? `Markierung „eingereicht“ für ${U.year} entfernen` : `${U.year} als eingereicht markieren`}</button>
       <h3>Tarif</h3><div class="list"><div class="item"><span class="t">Versicherung</span><span class="sub">${esc(p.ins || '–')}</span></div>
       <div class="item"><span class="t">Monatsbeitrag</span><span class="amt">${eur(p.fee)}</span></div><div class="item"><span class="t">Selbstbehalt / Jahr</span><span class="amt">${eur(p.sb)}</span></div>
-      <div class="item"><span class="t">BRE-Staffel</span><span class="amt">${p.staffel.map(fmtN).join(' → ')}</span></div><div class="item"><span class="t">Folgejahre</span><span class="sub">${hzText(p.horizon)}</span></div></div>
+      <div class="item"><span class="t">BRE-Staffel</span><span class="sub" style="text-align:right">${stText(p)}</span></div><div class="item"><span class="t">Folgejahre</span><span class="sub">${hzText(p.horizon)}</span></div></div>
       <button class="btn alt" data-act="editperson">Person und Tarif bearbeiten</button></div>${tabs()}`;
   },
   add: () => `<div class="top"><h2>Beleg erfassen</h2></div><div class="scroll">
@@ -435,10 +436,11 @@ const V = {
     return `<div class="top"><button class="back" data-act="cancelperson">‹ Abbrechen</button></div><div class="scroll"><h2 style="font-size:28px;margin-bottom:14px">${e.id ? 'Person bearbeiten' : 'Neue Person'}</h2>
       ${fld('pn', 'Name (wie auf den Rechnungen)', e.name)}${fld('pa', 'Weitere Schreibweisen, durch ; getrennt (optional)', (e.aliases || []).join('; '))}
       ${fld('pi', 'Versicherung und Tarif', e.ins)}${fld('pf', 'Monatsbeitrag in €', fmtN(e.fee), 'text', false, 'inputmode="decimal"')}${fld('ps', 'Selbstbehalt pro Jahr in €', fmtN(e.sb), 'text', false, 'inputmode="decimal"')}
-      <div class="f"><div class="lbl">BRE-Staffel: Monatsbeiträge je leistungsfreiem Jahr</div>
-        <div class="steps">${e.staffel.map((v, i) => `<div><label for="pst${i}">${i + 1}. Jahr</label><input id="pst${i}" type="text" inputmode="decimal" value="${esc(fmtN(v))}"></div>`).join('')}</div>
+      <div class="f"><div class="lbl">Beitragsrückerstattung je leistungsfreiem Jahr</div>
+        <div class="seg" style="max-width:none;margin-bottom:8px" role="group" aria-label="Einheit"><button style="flex:1" data-act="stunit" data-v="monate" class="${e.staffelUnit !== 'euro' ? 'on' : ''}">in Monatsbeiträgen</button><button style="flex:1" data-act="stunit" data-v="euro" class="${e.staffelUnit === 'euro' ? 'on' : ''}">in Euro</button></div>
+        <div class="steps">${e.staffel.map((v, i) => `<div><label for="pst${i}">${i + 1}. Jahr${e.staffelUnit === 'euro' ? ' (€)' : ''}</label><input id="pst${i}" type="text" inputmode="decimal" value="${esc(fmtN(v))}"></div>`).join('')}</div>
         <div style="display:flex;gap:10px;margin-top:8px"><button class="btn alt" style="margin:0" data-act="addstep">+ Jahr</button><button class="btn alt" style="margin:0" data-act="delstep" ${e.staffel.length < 2 ? 'disabled' : ''}>− Jahr</button></div>
-        <p class="sub" style="margin:6px 4px 0">Dezimalwerte wie 1,5 sind möglich. Die letzte Stufe gilt auch für alle weiteren Jahre.</p></div>
+        <p class="sub" style="margin:6px 4px 0">Dezimalwerte wie 1,5 sind möglich. Die letzte Stufe gilt auch für alle weiteren Jahre. In Euro setzt „+ Jahr“ die Steigerung automatisch fort.</p></div>
       ${fld('pfr', `Leistungsfreie Jahre in Folge bis Ende ${e.freeAsOf - 1}`, e.free, 'number', false, 'inputmode="numeric" min="0"')}
       <div class="f"><label for="phz">Verlust einrechnen für</label>${hzSel('phz', e.horizon)}</div>
       <p class="sub" style="margin:-4px 4px 16px">Folgejahre: Reichst du ein, beginnt die Staffel von vorn; die App rechnet den Rückstand in so vielen Folgejahren mit ein. Weißt du, dass bald ohnehin eingereicht wird, wähle weniger. Beispiel Staffel 1 → 2 → 3: 1 Monatsbeitrag nach dem 1. Jahr ohne Einreichen, 2 nach dem 2., ab dem 3. Jahr jeweils 3. Die genauen Werte stehen in den Tarifbedingungen.</p>
@@ -496,7 +498,7 @@ function applyLines(lines, type) {
 }
 function confirmSheet(text, label, fn) { U.sheet = { html: `<h4>${text}</h4><p class="sub">Das lässt sich nicht rückgängig machen.</p><button class="btn danger" data-act="confirm">${label}</button><button class="btn alt" data-act="closesheet">Abbrechen</button>`, fn }; render(); }
 function readySheet(title, sub, blob, name, after) { U.sheet = { html: `<h4>${esc(title)}</h4><p class="sub">${sub}</p><button class="btn" data-act="deliver">Teilen oder in „Dateien“ sichern</button>${after ? `<button class="btn alt" data-act="sheetafter">${after.label}</button>` : ''}<button class="btn alt" data-act="closesheet">Schließen</button>`, blob, name, after }; render(); }
-const newPerson = name => ({ id: '', name: name || '', aliases: [], ins: '', fee: '', sb: '', staffel: [1, 2, 3], free: 0, freeAsOf: THIS_YEAR, horizon: null });
+const newPerson = name => ({ id: '', name: name || '', aliases: [], ins: '', fee: '', sb: '', staffel: [1, 2, 3], staffelUnit: 'monate', free: 0, freeAsOf: THIS_YEAR, horizon: null });
 
 app.addEventListener('click', async ev => {
   const b = ev.target.closest('[data-act]'); if (!b || b.disabled) return;
@@ -512,13 +514,15 @@ app.addEventListener('click', async ev => {
     case 'newfromdraft': readDraft(); U.edit = newPerson(U.draft.f.patient); U.edit.back = 'review'; go('personform'); break;
     case 'newperson': U.edit = newPerson(''); U.edit.back = 'home'; go('personform'); break;
     case 'editperson': { const p = D.persons.find(x => x.id === U.pid); U.edit = { ...p, back: 'person' }; go('personform'); break; }
-    case 'addstep': readPersonForm(); U.edit.staffel.push(U.edit.staffel[U.edit.staffel.length - 1] || 1); render(); break;
+    case 'addstep': { readPersonForm(); const st = U.edit.staffel, l = +st[st.length - 1] || 1, d = st.length > 1 ? l - (+st[st.length - 2] || 0) : 0;
+      st.push(U.edit.staffelUnit === 'euro' && d > 0 ? l + d : l); render(); break; }
+    case 'stunit': readPersonForm(); if (U.edit.staffelUnit !== v) { U.edit.staffelUnit = v; U.edit.staffel = v === 'euro' ? [300, 400, 500] : [1, 2, 3]; } render(); break;
     case 'delstep': readPersonForm(); if (U.edit.staffel.length > 1) U.edit.staffel.pop(); render(); break;
     case 'cancelperson': go(U.edit.back); break;
     case 'saveperson': {
       const name = val('pn').trim(); if (!name) { toast('Bitte einen Namen eingeben.'); break; }
       const st = readSteps();
-      const p = { id: U.edit.id || uid(), name, aliases: val('pa').split(';').map(s => s.trim()).filter(Boolean), ins: val('pi').trim(), fee: num(val('pf')), sb: num(val('ps')), staffel: st.length ? st : [1], free: Math.max(0, parseInt(val('pfr')) || 0), freeAsOf: U.edit.freeAsOf || THIS_YEAR, horizon: val('phz') === '' ? null : +val('phz') };
+      const p = { id: U.edit.id || uid(), name, aliases: val('pa').split(';').map(s => s.trim()).filter(Boolean), ins: val('pi').trim(), fee: num(val('pf')), sb: num(val('ps')), staffel: st.length ? st : [1], free: Math.max(0, parseInt(val('pfr')) || 0), freeAsOf: U.edit.freeAsOf || THIS_YEAR, staffelUnit: U.edit.staffelUnit || 'monate', horizon: val('phz') === '' ? null : +val('phz') };
       const ix = D.persons.findIndex(x => x.id === p.id); if (ix >= 0) D.persons[ix] = p; else D.persons.push(p);
       await changed();
       if (U.edit.back === 'review') { U.draft.f.pid = p.id; U.draft.unsure = U.draft.unsure.filter(x => x !== 'patient'); }
