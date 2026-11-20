@@ -3,7 +3,7 @@ import * as pdfjs from './pdf.min.js';
 pdfjs.GlobalWorkerOptions.workerSrc = './pdf.worker.min.js';
 const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
 
-const VERSION = '1.5';
+const VERSION = '1.6';
 const THIS_YEAR = new Date().getFullYear();
 const STATUS = ['offen', 'bezahlt', 'eingereicht'];
 
@@ -606,5 +606,13 @@ app.addEventListener('change', async ev => {
 // Navigation von der Ablage aus merken
 app.addEventListener('click', ev => { const b = ev.target.closest('[data-act="invoice"]'); if (b) U.from = U.screen === 'review' ? U.from : (b.closest('.tree') ? 'files' : 'person'); }, true);
 
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded && !U.draft && !U.edit) { reloaded = true; location.reload(); } });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+    reg.update().catch(() => {});
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
+}
 render();
