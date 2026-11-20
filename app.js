@@ -3,7 +3,7 @@ import * as pdfjs from './pdf.min.js';
 pdfjs.GlobalWorkerOptions.workerSrc = './pdf.worker.min.js';
 const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
 
-const VERSION = '1.6';
+const VERSION = '1.7';
 const THIS_YEAR = new Date().getFullYear();
 const STATUS = ['offen', 'bezahlt', 'eingereicht'];
 
